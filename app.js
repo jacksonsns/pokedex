@@ -1,142 +1,88 @@
-const getTypeColor = type => {
-  const normal = '#F5F5F5'
-  return {
-    normal,
-    fire: '#FDDFDF',
-    grass: '#DEFDE0',
-    electric: '#FCF7DE',
-    ice: '#DEF3FD',
-    water: '#DEF3FD',
-    ground: '#F4E7DA',
-    rock: '#D5D5D4',
-    fairy: '#FCEAFF',
-    poison: '#98D7A5',
-    bug: '#F8D5A3',
-    ghost: '#CAC0F7',
-    dragon: '#97B3E6',
-    psychic: '#EAEDA1',
-    fighting: '#E6E0D4'
-  }[type] || normal
-}
+new Vue({
+  el: '#app',
+  data: {
+    pokemons: [],
+    limit: 15,
+    offset: 0,
+  },
+  methods: {
+    getTypeColor(type) {
+      const colors = {
+        normal: '#F5F5F5',
+        fire: '#FDDFDF',
+        grass: '#DEFDE0',
+        electric: '#FCF7DE',
+        ice: '#DEF3FD',
+        water: '#DEF3FD',
+        ground: '#F4E7DA',
+        rock: '#D5D5D4',
+        fairy: '#FCEAFF',
+        poison: '#98D7A5',
+        bug: '#F8D5A3',
+        ghost: '#CAC0F7',
+        dragon: '#97B3E6',
+        psychic: '#EAEDA1',
+        fighting: '#E6E0D4'
+      };
+      return colors[type] || colors.normal;
+    },
+    async fetchPokemonData() {
+      try {
+        const response = await axios.get(`https://pokeapi.co/api/v2/pokemon?limit=${this.limit}&offset=${this.offset}`);
 
-const getOnlyFulfilled = async ({ func, arr }) => {
-  const promises = arr.map(func)
-  const responses = await Promise.allSettled(promises)
-  return responses.filter(response => response.status === 'fulfilled')
-}
+        if (!response.data.results) {
+          throw new Error('Não foi possível obter as informações');
+        }
 
-const getPokemonsType = async pokeApiResults => {
-  const fulfilled = await getOnlyFulfilled({arr: pokeApiResults, func: result => fetch(result.url) })
-  const pokePromises = fulfilled.map(url => url.value.json())
-  const pokemons = await Promise.all(pokePromises)
-  return pokemons.map(fulfilled => fulfilled.types.map(info => DOMPurify.sanitize(info.type.name)))
-}
+        const pokemons = await Promise.all(
+          response.data.results.map(async (result) => {
+            const response = await axios.get(result.url);
+            const types = response.data.types.map((info) => info.type.name);
+            const imgUrl = `./assets/img/${response.data.id}.png`;
+            return {
+              id: response.data.id,
+              name: result.name,
+              type: types,
+              imgUrl: imgUrl,
+            };
+          })
+        );
 
-const getPokemonsIds = pokeApiResults => pokeApiResults.map(({ url }) => {
-    const urlAsArray = DOMPurify.sanitize(url).split('/')       
-    return urlAsArray[urlAsArray.length - 2]
-  })
-
-const getPokemonsImgs = async ids => {
-  const fulfilled = await getOnlyFulfilled({ arr: ids, func: id => fetch(`./assets/img/${id}.png`) })
-  return fulfilled.map(response => response.value.url)
-}
-
-
-const paginationInfo = (() => {  
-  const limit = 15
-  let offset = 0
-
-  const getLimit = () => limit
-  const getOffset = () => offset
-  const incrementOffset = () => offset += limit
-
-  return { getLimit, getOffset, incrementOffset }
-})()
-
-const getPokemons = async () => {
-  try {
-    const { getLimit, getOffset, incrementOffset } = paginationInfo
-    const response = await fetch(`https://pokeapi.co/api/v2/pokemon?limit=${getLimit()}&offset=${getOffset()}`);
-
-    if (!response.ok) {
-      throw new Error('Não foi possivel obter as informações')
+        this.pokemons = [...this.pokemons, ...pokemons];
+        this.offset += this.limit;
+      } catch (error) {
+        console.log('Algo deu errado:', error);
+      }
+    },
+    formattedPokemonName(pokemon) {
+      return `${pokemon.id}. ${pokemon.name.charAt(0).toUpperCase() + pokemon.name.slice(1)}`;
+    },
+    pokemonTypeText(pokemon) {
+      return pokemon.type.length > 1 ? pokemon.type.join(' | ') : pokemon.type[0];
+    },
+    observeLastPokemon(entries) {
+      const [lastEntry] = entries;
+      if (lastEntry.isIntersecting) {
+        this.fetchPokemonData();
+      }
+    },
+    setupIntersectionObserver() {
+      const options = {
+        rootMargin: '500px',
+      };
+      this.intersectionObserver = new IntersectionObserver(this.observeLastPokemon, options);
+      this.intersectionObserver.observe(this.$el.querySelector('[data-js="pokemons-list"] > li:last-child'));
+    },
+  },
+  created() {
+    this.fetchPokemonData();
+  },
+  mounted() {
+    this.setupIntersectionObserver();
+  },
+  beforeDestroy() {
+    if (this.intersectionObserver) {
+      this.intersectionObserver.disconnect();
     }
-
-    const { results: pokeApiResults } = await response.json()
-    const types = await getPokemonsType(pokeApiResults)
-    const ids = getPokemonsIds(pokeApiResults)
-    const imgs = await getPokemonsImgs(ids) 
-    const pokemons = ids.map((id, i) => ({ id, name: pokeApiResults[i].name, type: types[i], imgUrl: imgs[i]}))      
-    
-    incrementOffset()
-    return pokemons
-
-  } catch (error) {
-    console.log('algo deu errado', error)
-  }   
-}
-
-const renderPokemons = pokemons => {
-  const ul = document.querySelector('[data-js="pokemons-list"]')
-  const fragment  = document.createDocumentFragment()
-  
-
-  pokemons.forEach(({ id, name, type, imgUrl }) => {
-    const li = document.createElement('li')
-    const img = document.createElement('img')
-    const nameContainer = document.createElement('h2')
-    const typeContainer = document.createElement('p')
-    const [firstType] = type 
-
-    img.setAttribute('src', imgUrl)
-    img.setAttribute('alt', name)
-    img.setAttribute('class', 'card-image')
-    li.setAttribute('class', `card ${firstType}`)
-    li.style.setProperty('--type-color', getTypeColor(firstType))
-    
-    nameContainer.textContent = `${id}. ${name[0].toUpperCase()}${name.slice(1)}`
-    typeContainer.textContent = type.length > 1 ? type.join(' | ') : firstType
-    li.append(img, nameContainer, typeContainer)
-
-    fragment.append(li)     
-      
-  })
-
-  ul.append(fragment)
-}
-
-const observeLastPokemon = (pokemonsObserver => {
-  const lastPokemon = document.querySelector('[data-js="pokemons-list"]').lastChild
-  pokemonsObserver.observe(lastPokemon)
-})
-
-const handleNextPokemonsRender = () => {
-  const pokemonsObserver = new IntersectionObserver(async ([lastPokemon], observe) => {
-    if(!lastPokemon.isIntersecting) {
-      return
-    }
- 
-    observe.unobserve(lastPokemon.target)
-
-    if (paginationInfo.getOffset() === 150) {
-      return 
-    }
-
-    const pokemons = await getPokemons()
-    renderPokemons(pokemons)
-    observeLastPokemon(pokemonsObserver)
-  }, { rootMargin: '500px' })
-
-  observeLastPokemon(pokemonsObserver)
-}
-
-const handlePageLoaded = async () => {
-    const pokemons = await getPokemons()
-
-    renderPokemons(pokemons)
-    handleNextPokemonsRender()
-};
-
-handlePageLoaded();
-
+  },
+});
